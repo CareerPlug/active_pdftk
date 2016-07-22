@@ -1,4 +1,4 @@
-require "open3"
+require "posix/spawn"
 require "tmpdir"
 
 module ActivePdftk
@@ -186,20 +186,22 @@ module ActivePdftk
       if dsl_statements[:operation].to_s.match(/burst|unpack_files/)
         cmd.insert(0, "cd #{Dir.tmpdir} && ")
       end
-      Open3.popen3(cmd) do |stdin, stdout, stderr|
-        if @input
-          @input.rewind
-          stdin.puts @input.read
-        end
-        stdin.close
-        @output.puts stdout.read if @output && !@output.is_a?(String)
-        raise(CommandError, {:stderr => @error, :cmd => cmd}) unless (@error = stderr.read).empty?
+      pid, stdin, stdout, stderr = POSIX::Spawn.popen4(cmd)
+      if @input
+        @input.rewind
+        stdin.puts @input.read
       end
+      stdin.close
+      @output.puts stdout.read if @output && !@output.is_a?(String)
+      raise(CommandError, {:stderr => @error, :cmd => cmd}) unless (@error = stderr.read).empty?
       if dsl_statements[:operation].to_s.match(/burst|unpack_files/) && dsl_statements[:output].nil?
         Dir.tmpdir
       else
         @output
       end
+    ensure
+      [stdin, stdout, stderr].each { |io| io.close unless io.nil? || io.closed? }
+      Process.waitpid(pid)
     end
 
     # this hash represent order of parts in the command line.
